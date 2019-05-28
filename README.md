@@ -1,8 +1,6 @@
 # bacula-purge-unused
 Purge unused file media in bacula/bareos backups
 
-**This version works with MySQL databases, if you use Postgresql, then please check the code first**
-
 Usage: `./bacula-purge-unused [--debug] [--truncate] [--remove] [--error-only] [options]`
 
 ```

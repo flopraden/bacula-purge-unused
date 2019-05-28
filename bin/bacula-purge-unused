@@ -21,12 +21,13 @@ my $fuzz = "8 hour";
 my $except_job;
 my $error_only;
 my $remove;
+my $noconfirm;
 my $debug;
 my $truncate;
 
 sub usage {
     print STDERR <<"_END_";
-Usage: $0 [--debug] [--truncate] [--remove] [--error-only] [options]
+Usage: $0 [--debug] [--truncate] [--remove] [--noconfirm] [--error-only] [options]
 
 Options:
   --except-job N[,M...]]
@@ -52,6 +53,7 @@ GetOptions("debug" => \$debug,
            "fuzz-days=i" => sub { $fuzz = $_[1] * 86400 },
            "error-only" => \$error_only,
            "remove" => \$remove,
+	   "noconfirm" => \$noconfirm,
            "truncate" => \$truncate)
     or usage();
 
@@ -171,11 +173,13 @@ if ($remove) {
     }
     
     $| = 1;
-    print "OK to remove volumes? ";
-    my $ans = <STDIN>;
-    if ($ans !~ /^y/i) {
-        print "aborting.\n";
-        exit(0);
+    if(!$noconfirm){
+	print "OK to remove volumes? ";
+	my $ans = <STDIN>;
+	if ($ans !~ /^y/i) {
+	    print "aborting.\n";
+	    exit(0);
+	}
     }
     print "Removing from filesystem\n";
     for my $vol (keys %deletable) {
