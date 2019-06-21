@@ -25,10 +25,11 @@ my $noconfirm;
 my $debug;
 my $truncate;
 my $storage;
+my $liststorage;
 
 sub usage {
     print STDERR <<"_END_";
-Usage: $0 [--debug] [--truncate] [--remove] [--noconfirm] [--error-only] [options]
+Usage: $0 [--liststorage] [--debug] [--truncate] [--remove] [--noconfirm] [--error-only] [options]
 
 Options:
   --except-job N[,M...]]
@@ -58,6 +59,7 @@ GetOptions("debug" => \$debug,
            "error-only" => \$error_only,
            "remove" => \$remove,
 	   "noconfirm" => \$noconfirm,
+	   "liststorage" => \$liststorage,
            "truncate" => \$truncate)
     or usage();
 
@@ -65,6 +67,27 @@ die "--truncate is not implemented\n" if $truncate;
 
 sub failed {
     $_[0] ne 'T' && $_[0] ne 'W';
+}
+
+sub list_storage {
+    my ($dbconfig) = @_;
+
+    my $dbh = $dbconfig->connect();
+    
+    my $q = $dbh->prepare(
+        "SELECT storageid, name " .
+        "FROM storage");
+
+    $q->execute();
+    
+    my $all = $q->fetchall_arrayref;
+
+    printf("StorageID|Name of the storage\n---------+----------------------\n");
+    for my $r (@{$all}) {
+        my ($idstor, $name) = @{$r};
+	printf("%- 9i|%s\n", $idstor, $name);
+    }
+    exit(0);
 }
 
 sub list_error_only {
@@ -133,6 +156,10 @@ sub list_recyclable {
         $recyclable{$vol} = $info;
     }
     return %recyclable;
+}
+
+if ($liststorage) {
+    list_storage($dbconfig);
 }
 
 my %deletable = list_error_only($dbconfig);
