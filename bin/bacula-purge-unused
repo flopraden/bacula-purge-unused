@@ -24,6 +24,7 @@ my $remove;
 my $noconfirm;
 my $debug;
 my $truncate;
+my $storage;
 
 sub usage {
     print STDERR <<"_END_";
@@ -32,6 +33,8 @@ Usage: $0 [--debug] [--truncate] [--remove] [--noconfirm] [--error-only] [option
 Options:
   --except-job N[,M...]]
       for running jobs (may affect error-only status)
+  --storage ID
+      select specific storage ID
  --fuzz-days N
       only report files which are more than N days beyond expiry date.
  --error-only
@@ -50,6 +53,7 @@ my $dbconfig = new Bacula::DatabaseConfig;
 GetOptions("debug" => \$debug,
            "data-directory|d=s" => \$datadirectory,
            "except-job=i" => \$except_job,
+	   "storage=i" => \$storage,
            "fuzz-days=i" => sub { $fuzz = $_[1] * 86400 },
            "error-only" => \$error_only,
            "remove" => \$remove,
@@ -70,16 +74,19 @@ sub list_error_only {
 
     my $dbh = $dbconfig->connect();
     # $except_job is a command line argument
+    
     my $q = $dbh->prepare(
         "SELECT m.VolumeName, j.JobStatus ".
         "FROM Media m JOIN JobMedia jm ON m.MediaId = jm.MediaId AND m.MediaType = 'File' ".
         "JOIN Job j ON j.JobId = jm.JobId ".
-        ($except_job ? "WHERE j.JobId NOT IN ($except_job) " : "").
+        (($except_job || $storage ) ? "WHERE " : "" ) . ($except_job ? "j.JobId NOT IN ($except_job) " : "") .
+	($storage ? "m.storageid = $storage " : "") .
         "GROUP BY m.VolumeName, j.JobStatus");
 
     my $detail = $dbh->prepare(
         "SELECT volumename, lastwritten, volbytes, volstatus, volretention ".
-        "FROM media");
+        "FROM media" .
+	($storage ? "WHERE storageid = $storage" : ""));
 
     $q->execute();
     my $all = $q->fetchall_arrayref;
@@ -112,7 +119,8 @@ sub list_recyclable {
         "FROM media ".
         "WHERE mediatype = 'File' AND ".
         "   lastwritten + interval '$fuzz' < ".
-        "      NOW() -  volretention * interval '1 second'");
+        "      NOW() -  volretention * interval '1 second'" .
+	($storage ? "AND storageid = $storage" : ""));
 
     $recycle->execute();
     my $vols = $recycle->fetchall_hashref('volumename');
@@ -200,7 +208,9 @@ if ($remove) {
     print "Removing from database\n";
     print ".. deleting from Media\n";
     my $delete_media = $dbh->prepare(
-        "DELETE FROM media WHERE volumename IN ('" .
+        "DELETE FROM media WHERE " .
+	($storage ? "storageid = $storage AND " : "") .
+	"volumename IN ('" .
         join("','", keys %deletable) . "')");
     my $rv = $delete_media->execute() or die $delete_media->errstr;
     print ".... $rv rows deleted\n";
