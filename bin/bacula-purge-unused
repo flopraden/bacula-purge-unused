@@ -26,10 +26,12 @@ my $debug;
 my $truncate;
 my $storage;
 my $liststorage;
+my $exportremove;
+my $dryrun;
 
 sub usage {
     print STDERR <<"_END_";
-Usage: $0 [--liststorage] [--debug] [--truncate] [--remove] [--noconfirm] [--error-only] [options]
+Usage: $0 [--dryrun] [--liststorage] [--debug] [--truncate] [--remove] [--exportremove] [--noconfirm] [--error-only] [options]
 
 Options:
   --except-job N[,M...]]
@@ -58,12 +60,16 @@ GetOptions("debug" => \$debug,
            "fuzz-days=i" => sub { $fuzz = $_[1] * 86400 },
            "error-only" => \$error_only,
            "remove" => \$remove,
+	   "exportremove" => \$exportremove,
 	   "noconfirm" => \$noconfirm,
+	   "dryrun" => \$dryrun,
 	   "liststorage" => \$liststorage,
            "truncate" => \$truncate)
     or usage();
 
 die "--truncate is not implemented\n" if $truncate;
+
+die "--remove and --exportremove are mutually excluded" if $remove && $exportremove;
 
 sub failed {
     $_[0] ne 'T' && $_[0] ne 'W';
@@ -172,8 +178,8 @@ for my $vol (sort keys %deletable) {
     printf("%-22s %s%s\n", $vol, $deletable{$vol}, 
            (-l $file ? " -> " . readlink($file) : ""));
 }
-
-if ($remove) {
+my $dbh;
+if (!$dryrun && ($remove || $exportremove)) {
     my $baculaconf = (grep { -e $_ } qw(/etc/bareos/bareos-dir.conf /etc/bacula/bacula-dir.conf))[0];
 
     if ($baculaconf) {
@@ -202,7 +208,16 @@ if ($remove) {
         }
     }
 
-    my $dbh = $dbconfig->connect(AutoCommit => 0);
+    my $attr = {
+	RaiseError => 1, # Make database errors fatal to script
+	AutoCommit => 0, # Prevent statements from committing
+	# their transactions.
+    };
+    $dbh = $dbconfig->connect($attr);
+    $dbh->{AutoCommit} = 0;
+}
+
+if ($remove) {
     unless (-d $datadirectory) {
         die "$datadirectory: Directory not found\n";
     }
@@ -224,40 +239,64 @@ if ($remove) {
                 my $filedir = "$datadirectory/$vol";
                 $filedir =~ s:/[^/]*?$::;
                 $target = "$filedir/$target" unless $target =~ m:^/:;
-                unlink($target) || warn "$target: $!\n";
+		if($dryrun){
+		    printf("remove link '%s'\n", $target);
+		}
+		else{
+		    unlink($target) || warn "$target: $!\n";
+		}
             }
-            unlink("$datadirectory/$vol") || warn "$vol: $!\n";
+	    if($dryrun){
+		printf("remove '%s/%s'\n", $datadirectory,$vol);
+	    }
+	    else{
+		unlink("$datadirectory/$vol") || warn "$vol: $!\n";
+	    }
         } else {
             warn "$vol: no such file\n";
         }
     }
-
+}
+if ($exportremove){
+    print "export volumes for Removing from filesystem\n";
+    print "-----------------------------\n";
+    
+    for my $vol (keys %deletable) {
+	printf("rm -f %s/%s\n",$datadirectory,$vol);
+    }
+    print "-----------------------------\n";
+}
+if($dryrun){
+    print "dryrun: not removing from database\n";
+}
+elsif ($remove || $exportremove){
     print "Removing from database\n";
     print ".. deleting from Media\n";
     my $delete_media = $dbh->prepare(
-        "DELETE FROM media WHERE " .
+	"DELETE FROM media WHERE " .
 	($storage ? "storageid = $storage AND " : "") .
 	"volumename IN ('" .
-        join("','", keys %deletable) . "')");
+	join("','", keys %deletable) . "')");
     my $rv = $delete_media->execute() or die $delete_media->errstr;
     print ".... $rv rows deleted\n";
-
+    
     # now do the cascading delete
-
+    
     print ".. deleting from JobMedia\n";
     my $delete_jobmedia = $dbh->prepare(
-        "DELETE FROM jobmedia
-             WHERE mediaid NOT IN (SELECT mediaid FROM Media)");
+	"DELETE FROM jobmedia
+	    WHERE mediaid NOT IN (SELECT mediaid FROM Media)");
     $rv = $delete_jobmedia->execute() or die $delete_jobmedia->errstr;
     print ".... $rv rows deleted\n";
-
+    
     print ".. deleting from File\n";
     my $delete_file = $dbh->prepare(
-        "DELETE FROM file
-             WHERE jobid NOT IN (SELECT jobid FROM jobmedia)");
+	"DELETE FROM file
+	    WHERE jobid NOT IN (SELECT jobid FROM jobmedia)");
     $rv = $delete_file->execute() or die $delete_file->errstr;
     print ".... $rv rows deleted\n";
 
     $dbh->commit() or die $dbh->errstr;
     print "All done.\n";
 }
+
